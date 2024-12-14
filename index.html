@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Scroll Game</title>
+	<style>
+		html,
+		body {
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+			width: 100%;
+			height: 100%;
+			background: #000;
+		}
+
+		#gameCanvas {
+			display: block;
+			margin: 0 auto;
+		}
+
+		#info {
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			color: white;
+			font-size: 24px;
+			font-family: Arial, sans-serif;
+			z-index: 10;
+		}
+	</style>
+</head>
+
+<body>
+	<canvas id="gameCanvas" width="720" height="1280"></canvas>
+	<div id="info">
+		Scrolls: <span id="scrollCount">0</span><br>
+		Distance: <span id="distance">0 m</span><br>
+		Speed: <span id="speed">0 m/s</span><br>
+		Last Scroll Top Speed: <span id="lastScrollTopSpeed">0 m/s</span><br>
+	</div>
+
+	<script>
+		// ====================== CONSTANTS & CONFIGURATION ======================
+		const CANVAS = document.getElementById('gameCanvas');
+		const CTX = CANVAS.getContext('2d');
+
+		// Desired base resolution
+		const BASE_WIDTH = 720;
+		const BASE_HEIGHT = 1280;
+		const ASPECT_RATIO = BASE_WIDTH / BASE_HEIGHT;
+
+		// Hero constants and initial position
+		const HERO_SIZE = 100;
+		const HERO_X = (BASE_WIDTH - HERO_SIZE) / 2;
+		const HERO_Y = BASE_HEIGHT - 300 - (HERO_SIZE / 2); // 300px from bottom
+
+		// Adjusting factors for more realistic speeds & distances
+		const DISTANCE_FACTOR = 0.02;
+		const VELOCITY_FACTOR = 0.01;
+		const DECAY_FACTOR = 0.93;
+		const PIXELS_PER_METER = 100;     // Conversion from meters to pixels for background movement
+
+		// Pattern/Background configuration
+		const PATTERN_SIZE = 100;
+
+		// Finger trace configuration
+		const TRACE_LIFETIME = 300; // in ms, how long to keep the trace
+		const TRACE_RADIUS = 16;     // size of the trace circle
+		const TRACE_COLOR = 'rgba(255,255,255,0.5)'; // semi-transparent white
+
+		// ====================== HERO CLASS ======================
+		class Hero {
+			constructor(x, y, size) {
+				this.x = x;
+				this.y = y;
+				this.size = size;
+			}
+
+			draw(ctx) {
+				ctx.fillStyle = 'red';
+				ctx.beginPath();
+				ctx.arc(this.x + this.size / 2, this.y + this.size / 2, this.size / 2, 0, Math.PI * 2);
+				ctx.fill();
+			}
+		}
+
+		// Create hero instance
+		const hero = new Hero(HERO_X, HERO_Y, HERO_SIZE);
+
+		// ====================== GAME STATE VARIABLES ======================
+		let scrollCount = 0;
+		let distanceTraveled = 0; // in "meters"
+		let speed = 0; // in m/s
+		let lastScrollTopSpeed = 0;
+		let backgroundOffset = 0; // how much the background moved (in pixels)
+
+		// Gesture variables
+		let startY = 0;
+		let startTime = 0;
+		let isTouching = false;
+
+		// Finger trace positions: array of {x, y, time}
+		let fingerPositions = [];
+
+		// ====================== INPUT HANDLERS ======================
+		window.addEventListener('touchstart', (event) => {
+			if (event.touches.length > 0) {
+				isTouching = true;
+				startY = event.touches[0].clientY;
+				startTime = Date.now();
+				// Record the initial touch position for trace
+				addFingerTrace(event.touches[0].clientX, event.touches[0].clientY);
+			}
+		}, { passive: false });
+
+		window.addEventListener('touchmove', (event) => {
+			event.preventDefault(); // prevent scrolling the page
+			if (isTouching && event.touches.length > 0) {
+				// Add current finger position to trace
+				addFingerTrace(event.touches[0].clientX, event.touches[0].clientY);
+			}
+		}, { passive: false });
+
+		window.addEventListener('touchend', (event) => {
+			const endY = event.changedTouches[0].clientY;
+			const endTime = Date.now();
+			isTouching = false;
+
+			// Valid scroll if endY > startY
+			if (endY > startY) {
+				scrollCount++;
+				const distancePx = endY - startY;
+				const timeSec = (endTime - startTime) / 1000;
+				const velocity = timeSec > 0 ? (distancePx / timeSec) : 0;
+				const speedIncrement = (distancePx * DISTANCE_FACTOR) + (velocity * VELOCITY_FACTOR);
+				speed += speedIncrement;
+			}
+		});
+
+		// ====================== FINGER TRACE FUNCTIONS ======================
+		function addFingerTrace(x, y) {
+			// Convert from screen coordinates to game canvas coordinates
+			// because we scaled the canvas, we must find the ratio
+			const rect = CANVAS.getBoundingClientRect();
+			const scaleX = BASE_WIDTH / rect.width;
+			const scaleY = BASE_HEIGHT / rect.height;
+
+			const gameX = (x - rect.left) * scaleX;
+			const gameY = (y - rect.top) * scaleY;
+
+			fingerPositions.push({ x: gameX, y: gameY, time: Date.now() });
+		}
+
+		function drawFingerTrace() {
+			const now = Date.now();
+			// Filter out old positions
+			fingerPositions = fingerPositions.filter(pos => now - pos.time <= TRACE_LIFETIME);
+
+			// Draw remaining positions
+			CTX.fillStyle = TRACE_COLOR;
+			for (let pos of fingerPositions) {
+				CTX.beginPath();
+				CTX.arc(pos.x, pos.y, TRACE_RADIUS, 0, Math.PI * 2);
+				CTX.fill();
+			}
+		}
+
+		// ====================== BACKGROUND PATTERN CREATION ======================
+		let pattern = null;
+		function createDiagonalPattern() {
+			const patternCanvas = document.createElement('canvas');
+			patternCanvas.width = PATTERN_SIZE;
+			patternCanvas.height = PATTERN_SIZE;
+			const pctx = patternCanvas.getContext('2d');
+
+			// Fill with black
+			pctx.fillStyle = '#000';
+			pctx.fillRect(0, 0, PATTERN_SIZE, PATTERN_SIZE);
+
+			// Draw large diagonal lines (slightly lighter gray)
+			pctx.strokeStyle = '#2b2b2b';
+			pctx.lineWidth = 5;
+			// One diagonal line
+			pctx.beginPath();
+			pctx.moveTo(-50, -50);
+			pctx.lineTo(PATTERN_SIZE + 50, PATTERN_SIZE + 50);
+			pctx.stroke();
+
+			// Another parallel diagonal line, offset
+			pctx.beginPath();
+			pctx.moveTo(-50, 50);
+			pctx.lineTo(PATTERN_SIZE + 50, PATTERN_SIZE + 150);
+			pctx.stroke();
+
+			return CTX.createPattern(patternCanvas, 'repeat');
+		}
+
+		// ====================== INFO DISPLAY ======================
+		function updateInfo() {
+			document.getElementById('scrollCount').innerText = scrollCount;
+			let distanceText = distanceTraveled >= 1000
+				? (distanceTraveled / 1000).toFixed(2) + ' km'
+				: distanceTraveled.toFixed(2) + ' m';
+			document.getElementById('distance').innerText = distanceText;
+
+			let speedText = speed >= 1000
+				? (speed / 1000).toFixed(2) + ' km/h'
+				: speed.toFixed(2) + ' m/s';
+			document.getElementById('speed').innerText = speedText;
+		}
+
+		// ====================== DRAW FUNCTIONS ======================
+		function drawBackground() {
+			if (!pattern) return;
+			CTX.save();
+			let offset = backgroundOffset % PATTERN_SIZE;
+			CTX.translate(0, offset);
+			CTX.fillStyle = pattern;
+			CTX.fillRect(0, -BASE_HEIGHT * 2, BASE_WIDTH, BASE_HEIGHT * 4);
+			CTX.restore();
+		}
+
+		// ====================== GAME LOOP ======================
+		function gameLoop() {
+			CTX.clearRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+
+			// Apply exponential decay always
+			if (speed > 0) {
+				speed *= DECAY_FACTOR;
+				if (speed < 0.0001) speed = 0;
+			}
+
+			// Move background based on speed
+			let frameDistance = speed / 60; // distance traveled this frame in meters
+			distanceTraveled += frameDistance;
+
+			// Convert meters to pixels for background offset
+			let pixelMovement = frameDistance * PIXELS_PER_METER;
+			backgroundOffset += pixelMovement;
+
+			drawBackground();
+			hero.draw(CTX);
+			drawFingerTrace(); // draw the finger trace on top
+			updateInfo();
+
+			requestAnimationFrame(gameLoop);
+		}
+
+		// ====================== RESIZING FOR DIFFERENT SCREENS ======================
+		function resizeCanvas() {
+			let winW = window.innerWidth;
+			let winH = window.innerHeight;
+			let winAspect = winW / winH;
+
+			if (winAspect < ASPECT_RATIO) {
+				// Window too narrow, fit width
+				CANVAS.style.width = winW + "px";
+				CANVAS.style.height = (winW / ASPECT_RATIO) + "px";
+			} else {
+				// Window too wide, fit height
+				CANVAS.style.height = winH + "px";
+				CANVAS.style.width = (winH * ASPECT_RATIO) + "px";
+			}
+		}
+
+		window.addEventListener('resize', resizeCanvas);
+
+		// ====================== STARTUP ======================
+		pattern = createDiagonalPattern();
+		resizeCanvas();
+		gameLoop();
+	</script>
+</body>
+
+</html>

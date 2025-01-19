@@ -5,6 +5,7 @@
 	<meta charset="UTF-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 	<title>Scroll Game</title>
+	<script src="jager.js"></script>
 	<style>
 		html,
 		body {
@@ -30,6 +31,101 @@
 			font-family: Arial, sans-serif;
 			z-index: 10;
 		}
+
+		#statsButton {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			padding: 10px 20px;
+			background: #444;
+			color: white;
+			border: none;
+			border-radius: 5px;
+			cursor: pointer;
+			font-size: 18px;
+			z-index: 100;
+		}
+
+		#statsButton:hover {
+			background: #555;
+		}
+
+		#statsModal {
+			display: none;
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			background: rgba(0, 0, 0, 0.9);
+			padding: 20px;
+			border-radius: 10px;
+			color: white;
+			font-family: Arial, sans-serif;
+			min-width: 300px;
+			z-index: 1000;
+			border: 1px solid #444;
+		}
+
+		#statsModal h2 {
+			margin-top: 0;
+			color: #fff;
+			border-bottom: 1px solid #444;
+			padding-bottom: 10px;
+		}
+
+		.stat-row {
+			display: flex;
+			justify-content: space-between;
+			margin: 10px 0;
+			padding: 5px 0;
+			border-bottom: 1px solid #333;
+		}
+
+		#closeStats {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background: none;
+			border: none;
+			color: white;
+			font-size: 20px;
+			cursor: pointer;
+		}
+
+		#closeStats:hover {
+			color: #ff4444;
+		}
+
+		#enemyHealthBar {
+			display: none;
+			position: absolute;
+			left: 50%;
+			transform: translateX(-50%);
+			width: 100px;
+			height: 10px;
+			background: #333;
+			border: 1px solid #fff;
+			border-radius: 5px;
+			overflow: hidden;
+		}
+
+		#enemyHealthFill {
+			width: 100%;
+			height: 100%;
+			background: #ff0000;
+			transition: width 0.3s ease;
+		}
+
+		#symbolsRequired {
+			position: absolute;
+			left: 50%;
+			transform: translateX(-50%);
+			color: white;
+			font-family: Arial, sans-serif;
+			font-size: 18px;
+			text-align: center;
+			text-shadow: 2px 2px 2px rgba(0, 0, 0, 0.5);
+		}
 	</style>
 </head>
 
@@ -39,239 +135,472 @@
 		Scrolls: <span id="scrollCount">0</span><br>
 		Distance: <span id="distance">0 m</span><br>
 		Speed: <span id="speed">0 m/s</span><br>
-		Last Scroll Top Speed: <span id="lastScrollTopSpeed">0 m/s</span><br>
+	</div>
+
+	<div id="enemyHealthBar">
+		<div id="enemyHealthFill"></div>
+	</div>
+	<div id="symbolsRequired"></div>
+
+	<button id="statsButton">📊 Stats</button>
+
+	<div id="statsModal">
+		<button id="closeStats">✕</button>
+		<h2>Detailed Statistics</h2>
+		<div class="stat-row">
+			<span>Session Duration:</span>
+			<span id="sessionTime">0:00</span>
+		</div>
+		<div class="stat-row">
+			<span>Average Speed:</span>
+			<span id="avgSpeed">0 m/s</span>
+		</div>
+		<div class="stat-row">
+			<span>Top Speed:</span>
+			<span id="topSpeed">0 m/s</span>
+		</div>
+		<div class="stat-row">
+			<span>Scrolls per Minute:</span>
+			<span id="scrollsPerMin">0</span>
+		</div>
+		<div class="stat-row">
+			<span>Best Single Scroll:</span>
+			<span id="bestScroll">0 m</span>
+		</div>
+		<div class="stat-row">
+			<span>Scroll Efficiency:</span>
+			<span id="scrollEfficiency">0 m/scroll</span>
+		</div>
 	</div>
 
 	<script>
-		// ====================== CONSTANTS & CONFIGURATION ======================
-		const CANVAS = document.getElementById('gameCanvas');
-		const CTX = CANVAS.getContext('2d');
+		window.onload = function () {
+			const jager = new Jager();
 
-		// Desired base resolution
-		const BASE_WIDTH = 720;
-		const BASE_HEIGHT = 1280;
-		const ASPECT_RATIO = BASE_WIDTH / BASE_HEIGHT;
+			// Enemy progression data
+			const ENEMY_DATA = [
+				{
+					distance: 50,
+					health: 100,
+					size: 150,
+					color: '#ff0000',
+					allowedSymbols: ['V', '^'],
+					symbolText: 'Draw V or ^'
+				},
+				{
+					distance: 120,
+					health: 150,
+					size: 170,
+					color: '#ff4400',
+					allowedSymbols: ['<', '>'],
+					symbolText: 'Draw < or >'
+				},
+				{
+					distance: 195,
+					health: 200,
+					size: 190,
+					color: '#ff0066',
+					allowedSymbols: ['circle', 'pigtail'],
+					symbolText: 'Draw O or ∫'
+				},
+				{
+					distance: 280,
+					health: 250,
+					size: 210,
+					color: '#ff00ff',
+					allowedSymbols: ['|', '_', 'lighting'],
+					symbolText: 'Draw |, _ or /'
+				}
+			];
 
-		// Hero constants and initial position
-		const HERO_SIZE = 100;
-		const HERO_X = (BASE_WIDTH - HERO_SIZE) / 2;
-		const HERO_Y = BASE_HEIGHT - 300 - (HERO_SIZE / 2); // 300px from bottom
+			const CANVAS = document.getElementById('gameCanvas');
+			const CTX = CANVAS.getContext('2d');
 
-		// Adjusting factors for more realistic speeds & distances
-		const DISTANCE_FACTOR = 0.02;
-		const VELOCITY_FACTOR = 0.01;
-		const DECAY_FACTOR = 0.93;
-		const PIXELS_PER_METER = 100;     // Conversion from meters to pixels for background movement
+			const BASE_WIDTH = 720;
+			const BASE_HEIGHT = 1280;
+			const ASPECT_RATIO = BASE_WIDTH / BASE_HEIGHT;
 
-		// Pattern/Background configuration
-		const PATTERN_SIZE = 100;
+			const HERO_SIZE = 100;
+			const HERO_X = (BASE_WIDTH - HERO_SIZE) / 2;
+			const HERO_Y = BASE_HEIGHT - 300 - (HERO_SIZE / 2);
 
-		// Finger trace configuration
-		const TRACE_LIFETIME = 300; // in ms, how long to keep the trace
-		const TRACE_RADIUS = 16;     // size of the trace circle
-		const TRACE_COLOR = 'rgba(255,255,255,0.5)'; // semi-transparent white
+			const DISTANCE_FACTOR = 0.02;
+			const VELOCITY_FACTOR = 0.01;
+			const DECAY_FACTOR = 0.93;
+			const PIXELS_PER_METER = 100;
+			const PATTERN_SIZE = 100;
+			const ENEMY_Y = 200;
+			const TRACE_LIFETIME = 300;
+			const TRACE_RADIUS = 16;
+			const TRACE_COLOR = 'rgba(255,255,255,0.5)';
+			const ANIMATION_DURATION = 500; // ms
 
-		// ====================== HERO CLASS ======================
-		class Hero {
-			constructor(x, y, size) {
-				this.x = x;
-				this.y = y;
-				this.size = size;
+			let heroCurrentY = HERO_Y;
+			let heroTargetY = HERO_Y;
+			const HERO_SCROLL_OFFSET = 170;
+			const HERO_MOVEMENT_SPEED = 0.12;
+
+			// Game state
+			let scrollCount = 0;
+			let distanceTraveled = 0;
+			let speed = 0;
+			let backgroundOffset = 0;
+			let sessionStartTime = Date.now();
+			let topSpeedAllTime = 0;
+			let bestScrollDistance = 0;
+			let speedReadings = [];
+			let lastScrollDistance = 0;
+			let startY = 0;
+			let startTime = 0;
+			let isTouching = false;
+			let fingerPositions = [];
+			let currentEnemyIndex = 0;
+
+			// Enemy state
+			let isEnemyActive = false;
+			let enemyHealth = 0;
+			let enemyStartTime = 0;
+			let enemyStartX = -200; // Start off-screen
+			let currentEnemyX = enemyStartX;
+
+			class Hero {
+				constructor(x, y, size) {
+					this.x = x;
+					this.baseY = y;
+					this.size = size;
+				}
+
+				draw(ctx) {
+					ctx.fillStyle = 'white';
+					ctx.beginPath();
+					ctx.arc(this.x + this.size / 2, heroCurrentY + this.size / 2, this.size / 2, 0, Math.PI * 2);
+					ctx.fill();
+				}
 			}
 
-			draw(ctx) {
-				ctx.fillStyle = 'red';
-				ctx.beginPath();
-				ctx.arc(this.x + this.size / 2, this.y + this.size / 2, this.size / 2, 0, Math.PI * 2);
-				ctx.fill();
-			}
-		}
+			class Enemy {
+				constructor(data) {
+					this.data = data;
+					this.health = data.health;
+					this.size = data.size;
+					this.color = data.color;
+					this.allowedSymbols = data.allowedSymbols;
+					this.symbolText = data.symbolText;
+				}
 
-		// Create hero instance
-		const hero = new Hero(HERO_X, HERO_Y, HERO_SIZE);
+				draw(ctx) {
+					if (!isEnemyActive) return;
 
-		// ====================== GAME STATE VARIABLES ======================
-		let scrollCount = 0;
-		let distanceTraveled = 0; // in "meters"
-		let speed = 0; // in m/s
-		let lastScrollTopSpeed = 0;
-		let backgroundOffset = 0; // how much the background moved (in pixels)
+					ctx.save();
+					ctx.fillStyle = this.color;
+					ctx.translate(currentEnemyX, ENEMY_Y);
 
-		// Gesture variables
-		let startY = 0;
-		let startTime = 0;
-		let isTouching = false;
+					ctx.beginPath();
+					ctx.arc(0, 0, this.size / 2, 0, Math.PI * 2);
+					ctx.fill();
+					ctx.restore();
 
-		// Finger trace positions: array of {x, y, time}
-		let fingerPositions = [];
+					// Update health bar position to follow enemy
+					const healthBar = document.getElementById('enemyHealthBar');
+					const symbolsText = document.getElementById('symbolsRequired');
+					healthBar.style.top = (ENEMY_Y + this.size / 2 + 20) + 'px';
+					symbolsText.style.top = (ENEMY_Y - this.size / 2 - 30) + 'px';
 
-		// ====================== INPUT HANDLERS ======================
-		window.addEventListener('touchstart', (event) => {
-			if (event.touches.length > 0) {
-				isTouching = true;
-				startY = event.touches[0].clientY;
-				startTime = Date.now();
-				// Record the initial touch position for trace
-				addFingerTrace(event.touches[0].clientX, event.touches[0].clientY);
-			}
-		}, { passive: false });
+					// Update health bar fill
+					const healthFill = document.getElementById('enemyHealthFill');
+					healthFill.style.width = (this.health / this.data.health * 100) + '%';
+					healthFill.style.backgroundColor = this.color;
+				}
 
-		window.addEventListener('touchmove', (event) => {
-			event.preventDefault(); // prevent scrolling the page
-			if (isTouching && event.touches.length > 0) {
-				// Add current finger position to trace
-				addFingerTrace(event.touches[0].clientX, event.touches[0].clientY);
-			}
-		}, { passive: false });
+				takeDamage() {
+					this.health -= 20;
+					if (this.health <= 0) {
+						this.defeat();
+					}
+				}
 
-		window.addEventListener('touchend', (event) => {
-			const endY = event.changedTouches[0].clientY;
-			const endTime = Date.now();
-			isTouching = false;
+				defeat() {
+					isEnemyActive = false;
+					document.getElementById('enemyHealthBar').style.display = 'none';
+					document.getElementById('symbolsRequired').style.display = 'none';
+					currentEnemyIndex++;
+				}
 
-			// Valid scroll if endY > startY
-			if (endY > startY) {
-				scrollCount++;
-				const distancePx = endY - startY;
-				const timeSec = (endTime - startTime) / 1000;
-				const velocity = timeSec > 0 ? (distancePx / timeSec) : 0;
-				const speedIncrement = (distancePx * DISTANCE_FACTOR) + (velocity * VELOCITY_FACTOR);
-				speed += speedIncrement;
-			}
-		});
-
-		// ====================== FINGER TRACE FUNCTIONS ======================
-		function addFingerTrace(x, y) {
-			// Convert from screen coordinates to game canvas coordinates
-			// because we scaled the canvas, we must find the ratio
-			const rect = CANVAS.getBoundingClientRect();
-			const scaleX = BASE_WIDTH / rect.width;
-			const scaleY = BASE_HEIGHT / rect.height;
-
-			const gameX = (x - rect.left) * scaleX;
-			const gameY = (y - rect.top) * scaleY;
-
-			fingerPositions.push({ x: gameX, y: gameY, time: Date.now() });
-		}
-
-		function drawFingerTrace() {
-			const now = Date.now();
-			// Filter out old positions
-			fingerPositions = fingerPositions.filter(pos => now - pos.time <= TRACE_LIFETIME);
-
-			// Draw remaining positions
-			CTX.fillStyle = TRACE_COLOR;
-			for (let pos of fingerPositions) {
-				CTX.beginPath();
-				CTX.arc(pos.x, pos.y, TRACE_RADIUS, 0, Math.PI * 2);
-				CTX.fill();
-			}
-		}
-
-		// ====================== BACKGROUND PATTERN CREATION ======================
-		let pattern = null;
-		function createDiagonalPattern() {
-			const patternCanvas = document.createElement('canvas');
-			patternCanvas.width = PATTERN_SIZE;
-			patternCanvas.height = PATTERN_SIZE;
-			const pctx = patternCanvas.getContext('2d');
-
-			// Fill with black
-			pctx.fillStyle = '#000';
-			pctx.fillRect(0, 0, PATTERN_SIZE, PATTERN_SIZE);
-
-			// Draw large diagonal lines (slightly lighter gray)
-			pctx.strokeStyle = '#2b2b2b';
-			pctx.lineWidth = 5;
-			// One diagonal line
-			pctx.beginPath();
-			pctx.moveTo(-50, -50);
-			pctx.lineTo(PATTERN_SIZE + 50, PATTERN_SIZE + 50);
-			pctx.stroke();
-
-			// Another parallel diagonal line, offset
-			pctx.beginPath();
-			pctx.moveTo(-50, 50);
-			pctx.lineTo(PATTERN_SIZE + 50, PATTERN_SIZE + 150);
-			pctx.stroke();
-
-			return CTX.createPattern(patternCanvas, 'repeat');
-		}
-
-		// ====================== INFO DISPLAY ======================
-		function updateInfo() {
-			document.getElementById('scrollCount').innerText = scrollCount;
-			let distanceText = distanceTraveled >= 1000
-				? (distanceTraveled / 1000).toFixed(2) + ' km'
-				: distanceTraveled.toFixed(2) + ' m';
-			document.getElementById('distance').innerText = distanceText;
-
-			let speedText = speed >= 1000
-				? (speed / 1000).toFixed(2) + ' km/h'
-				: speed.toFixed(2) + ' m/s';
-			document.getElementById('speed').innerText = speedText;
-		}
-
-		// ====================== DRAW FUNCTIONS ======================
-		function drawBackground() {
-			if (!pattern) return;
-			CTX.save();
-			let offset = backgroundOffset % PATTERN_SIZE;
-			CTX.translate(0, offset);
-			CTX.fillStyle = pattern;
-			CTX.fillRect(0, -BASE_HEIGHT * 2, BASE_WIDTH, BASE_HEIGHT * 4);
-			CTX.restore();
-		}
-
-		// ====================== GAME LOOP ======================
-		function gameLoop() {
-			CTX.clearRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
-
-			// Apply exponential decay always
-			if (speed > 0) {
-				speed *= DECAY_FACTOR;
-				if (speed < 0.0001) speed = 0;
+				update() {
+					if (isEnemyActive) {
+						const progress = Math.min(1, (Date.now() - enemyStartTime) / ANIMATION_DURATION);
+						currentEnemyX = enemyStartX + (BASE_WIDTH / 2 - enemyStartX) * progress;
+					}
+				}
 			}
 
-			// Move background based on speed
-			let frameDistance = speed / 60; // distance traveled this frame in meters
-			distanceTraveled += frameDistance;
+			const hero = new Hero(HERO_X, HERO_Y, HERO_SIZE);
+			let currentEnemy = null;
+			// Input Handlers
+			let gesturePoints = [];
 
-			// Convert meters to pixels for background offset
-			let pixelMovement = frameDistance * PIXELS_PER_METER;
-			backgroundOffset += pixelMovement;
-
-			drawBackground();
-			hero.draw(CTX);
-			drawFingerTrace(); // draw the finger trace on top
-			updateInfo();
-
-			requestAnimationFrame(gameLoop);
-		}
-
-		// ====================== RESIZING FOR DIFFERENT SCREENS ======================
-		function resizeCanvas() {
-			let winW = window.innerWidth;
-			let winH = window.innerHeight;
-			let winAspect = winW / winH;
-
-			if (winAspect < ASPECT_RATIO) {
-				// Window too narrow, fit width
-				CANVAS.style.width = winW + "px";
-				CANVAS.style.height = (winW / ASPECT_RATIO) + "px";
-			} else {
-				// Window too wide, fit height
-				CANVAS.style.height = winH + "px";
-				CANVAS.style.width = (winH * ASPECT_RATIO) + "px";
+			function getScaledPoint(event) {
+				const rect = CANVAS.getBoundingClientRect();
+				const scaleX = CANVAS.width / rect.width;
+				const scaleY = CANVAS.height / rect.height;
+				return {
+					x: (event.clientX - rect.left) * scaleX,
+					y: (event.clientY - rect.top) * scaleY
+				};
 			}
-		}
 
-		window.addEventListener('resize', resizeCanvas);
+			window.addEventListener('touchstart', (event) => {
+				if (event.touches.length > 0) {
+					isTouching = true;
+					heroTargetY = HERO_Y - HERO_SCROLL_OFFSET;
+					startY = event.touches[0].clientY;
+					startTime = Date.now();
 
-		// ====================== STARTUP ======================
-		pattern = createDiagonalPattern();
-		resizeCanvas();
-		gameLoop();
+					if (isEnemyActive) {
+						gesturePoints = [];
+						jager.reset();
+					}
+
+					const point = getScaledPoint({
+						clientX: event.touches[0].clientX,
+						clientY: event.touches[0].clientY
+					});
+
+					if (isEnemyActive) {
+						gesturePoints.push(point);
+						jager.pushPoint(point);
+					} else {
+						addFingerTrace(point.x, point.y);
+					}
+				}
+			}, { passive: false });
+
+			window.addEventListener('touchmove', (event) => {
+				event.preventDefault();
+				if (isTouching && event.touches.length > 0) {
+					const point = getScaledPoint({
+						clientX: event.touches[0].clientX,
+						clientY: event.touches[0].clientY
+					});
+
+					if (isEnemyActive) {
+						gesturePoints.push(point);
+						jager.pushPoint(point);
+					} else {
+						addFingerTrace(point.x, point.y);
+					}
+				}
+			}, { passive: false });
+
+			window.addEventListener('touchend', (event) => {
+				const endY = event.changedTouches[0].clientY;
+				const endTime = Date.now();
+				isTouching = false;
+				heroTargetY = HERO_Y;
+
+				if (isEnemyActive) {
+					const symbols = jager.recognise();
+					if (symbols.length > 0 && symbols[0].name !== null &&
+						currentEnemy.allowedSymbols.includes(symbols[0].name)) {
+						currentEnemy.takeDamage();
+					}
+					gesturePoints = [];
+				} else if (endY > startY) {
+					scrollCount++;
+					const distancePx = endY - startY;
+					const timeSec = (endTime - startTime) / 1000;
+					const velocity = timeSec > 0 ? (distancePx / timeSec) : 0;
+					const speedIncrement = (distancePx * DISTANCE_FACTOR) + (velocity * VELOCITY_FACTOR);
+					speed += speedIncrement;
+
+					speedReadings.push(speed);
+					if (speed > topSpeedAllTime) {
+						topSpeedAllTime = speed;
+					}
+
+					lastScrollDistance = speedIncrement;
+					if (lastScrollDistance > bestScrollDistance) {
+						bestScrollDistance = lastScrollDistance;
+					}
+				}
+			});
+
+			function addFingerTrace(x, y) {
+				fingerPositions.push({ x, y, time: Date.now() });
+			}
+
+			function drawFingerTrace() {
+				const now = Date.now();
+				fingerPositions = fingerPositions.filter(pos => now - pos.time <= TRACE_LIFETIME);
+				CTX.fillStyle = TRACE_COLOR;
+				for (let pos of fingerPositions) {
+					CTX.beginPath();
+					CTX.arc(pos.x, pos.y, TRACE_RADIUS, 0, Math.PI * 2);
+					CTX.fill();
+				}
+			}
+
+			function createDiagonalPattern() {
+				const patternCanvas = document.createElement('canvas');
+				patternCanvas.width = PATTERN_SIZE;
+				patternCanvas.height = PATTERN_SIZE;
+				const pctx = patternCanvas.getContext('2d');
+
+				pctx.fillStyle = '#000';
+				pctx.fillRect(0, 0, PATTERN_SIZE, PATTERN_SIZE);
+				pctx.strokeStyle = '#2b2b2b';
+				pctx.lineWidth = 5;
+
+				pctx.beginPath();
+				pctx.moveTo(-50, -50);
+				pctx.lineTo(PATTERN_SIZE + 50, PATTERN_SIZE + 50);
+				pctx.stroke();
+
+				pctx.beginPath();
+				pctx.moveTo(-50, 50);
+				pctx.lineTo(PATTERN_SIZE + 50, PATTERN_SIZE + 150);
+				pctx.stroke();
+
+				return CTX.createPattern(patternCanvas, 'repeat');
+			}
+
+			function checkEnemyEncounter() {
+				if (!isEnemyActive && currentEnemyIndex < ENEMY_DATA.length &&
+					distanceTraveled >= ENEMY_DATA[currentEnemyIndex].distance) {
+					isEnemyActive = true;
+					enemyStartTime = Date.now();
+					currentEnemyX = enemyStartX;
+					currentEnemy = new Enemy(ENEMY_DATA[currentEnemyIndex]);
+					document.getElementById('enemyHealthBar').style.display = 'block';
+					document.getElementById('symbolsRequired').style.display = 'block';
+					document.getElementById('symbolsRequired').textContent = currentEnemy.symbolText;
+				}
+			}
+
+			function gameLoop() {
+				CTX.clearRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+
+				if (!isEnemyActive && speed > 0) {
+					speed *= DECAY_FACTOR;
+					if (speed < 0.0001) speed = 0;
+
+					let frameDistance = speed / 60;
+					distanceTraveled += frameDistance;
+					let pixelMovement = frameDistance * PIXELS_PER_METER;
+					backgroundOffset += pixelMovement;
+				}
+
+				checkEnemyEncounter();
+				heroCurrentY += (heroTargetY - heroCurrentY) * HERO_MOVEMENT_SPEED;
+
+				drawBackground();
+				hero.draw(CTX);
+
+				if (isEnemyActive) {
+					currentEnemy.update();
+					currentEnemy.draw(CTX);
+
+					if (gesturePoints.length > 1) {
+						CTX.beginPath();
+						CTX.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+						CTX.lineWidth = 5;
+						CTX.moveTo(gesturePoints[0].x, gesturePoints[0].y);
+						for (let i = 1; i < gesturePoints.length; i++) {
+							CTX.lineTo(gesturePoints[i].x, gesturePoints[i].y);
+						}
+						CTX.stroke();
+					}
+				} else {
+					drawFingerTrace();
+				}
+
+				updateInfo();
+				updateExtendedStats();
+				requestAnimationFrame(gameLoop);
+			}
+
+			function drawBackground() {
+				if (!pattern) return;
+				CTX.save();
+				let offset = backgroundOffset % PATTERN_SIZE;
+				CTX.translate(0, offset);
+				CTX.fillStyle = pattern;
+				CTX.fillRect(0, -BASE_HEIGHT * 2, BASE_WIDTH, BASE_HEIGHT * 4);
+				CTX.restore();
+			}
+
+			function updateInfo() {
+				document.getElementById('scrollCount').innerText = scrollCount;
+				let distanceText = distanceTraveled >= 1000
+					? (distanceTraveled / 1000).toFixed(2) + ' km'
+					: distanceTraveled.toFixed(2) + ' m';
+				document.getElementById('distance').innerText = distanceText;
+
+				let speedText = speed >= 1000
+					? (speed / 1000).toFixed(2) + ' km/h'
+					: speed.toFixed(2) + ' m/s';
+				document.getElementById('speed').innerText = speedText;
+			}
+
+			function updateExtendedStats() {
+				const sessionDuration = Math.floor((Date.now() - sessionStartTime) / 1000);
+				const minutes = Math.floor(sessionDuration / 60);
+				const seconds = sessionDuration % 60;
+				document.getElementById('sessionTime').textContent =
+					`${minutes}:${seconds.toString().padStart(2, '0')}`;
+
+				const avgSpeed = speedReadings.length > 0
+					? speedReadings.reduce((a, b) => a + b, 0) / speedReadings.length
+					: 0;
+				document.getElementById('avgSpeed').textContent =
+					avgSpeed >= 1000 ? `${(avgSpeed / 1000).toFixed(2)} km/h` : `${avgSpeed.toFixed(2)} m/s`;
+
+				document.getElementById('topSpeed').textContent =
+					topSpeedAllTime >= 1000 ? `${(topSpeedAllTime / 1000).toFixed(2)} km/h` : `${topSpeedAllTime.toFixed(2)} m/s`;
+
+				const scrollsPerMin = (scrollCount / (sessionDuration / 60)) || 0;
+				document.getElementById('scrollsPerMin').textContent = scrollsPerMin.toFixed(1);
+
+				document.getElementById('bestScroll').textContent =
+					bestScrollDistance >= 1000 ? `${(bestScrollDistance / 1000).toFixed(2)} km` : `${bestScrollDistance.toFixed(2)} m`;
+
+				const efficiency = distanceTraveled / (scrollCount || 1);
+				document.getElementById('scrollEfficiency').textContent =
+					efficiency >= 1000 ? `${(efficiency / 1000).toFixed(2)} km/scroll` : `${efficiency.toFixed(2)} m/scroll`;
+			}
+
+			const statsButton = document.getElementById('statsButton');
+			const statsModal = document.getElementById('statsModal');
+			const closeStats = document.getElementById('closeStats');
+
+			statsButton.addEventListener('click', () => {
+				statsModal.style.display = 'block';
+			});
+
+			closeStats.addEventListener('click', () => {
+				statsModal.style.display = 'none';
+			});
+
+			function resizeCanvas() {
+				let winW = window.innerWidth;
+				let winH = window.innerHeight;
+				let winAspect = winW / winH;
+
+				if (winAspect < ASPECT_RATIO) {
+					CANVAS.style.width = winW + "px";
+					CANVAS.style.height = (winW / ASPECT_RATIO) + "px";
+				} else {
+					CANVAS.style.height = winH + "px";
+					CANVAS.style.width = (winH * ASPECT_RATIO) + "px";
+				}
+			}
+
+			window.addEventListener('resize', resizeCanvas);
+
+			let pattern = createDiagonalPattern();
+			resizeCanvas();
+			gameLoop();
+		};
 	</script>
 </body>
 
